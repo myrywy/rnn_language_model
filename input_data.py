@@ -2,6 +2,7 @@ import numpy as np
 import tensorflow as tf
 from typing import List, Iterable, Generator
 import tempfile
+import os
 import vocabulary as vc
 
 
@@ -55,14 +56,17 @@ class InputData:
             self._write_to_file(self.sents_to_id_lists(self.sents), filename)
 
     def dataset(self):
-        if not self.recores_file:
+        if not self.records_file:
             self.records_file = tempfile.mktemp()
             self.write(self.records_file)
 
         filenames = [self.records_file]
         dataset = tf.contrib.data.TFRecordDataset(filenames)
-        dataset = dataset.map(input_data.get_single_example)
+        dataset = dataset.map(self.get_single_example)
         return dataset
+
+    def close(self):
+        os.remove(self.records_file)
 
     @staticmethod
     def make_example(sentence: List[int]) -> tf.train.SequenceExample:

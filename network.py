@@ -1,7 +1,5 @@
 import tensorflow as tf
 import numpy as np
-from ptb_reader import * # temporarly
-#voc, _ = read_ptb()
 
 
 class BasicConfig:
@@ -14,21 +12,26 @@ class BasicConfig:
 
 class RnnLm:
     """Model języka oparty na sieciach rnn. W pierszej wersji tylko do uczenia i ewaluacji, z komórkami lstm"""
-    def __init__(self, train_path, validate_path, test_path, config, vocabulary):
+    def __init__(self, train_set, validate_set, test_set, config, vocabulary):
         """Tworzy  trzy grafy obliczeniowe sieci z tymi samymi zmiennymi, taką samą arhitekturą, ale innymi źródłąmi
         danych wejściowych - czytające z train path, validate path i test path"""
         self.vocabulary = vocabulary
         self.config = config
+
+        self.train_set = train_set
+        self.validate_set = validate_set
+        self.test_set = test_set
 
         # below all trainable variables are defined
         self.cell = self.multi_cell(config.size, config.depth)
         self.weights = tf.Variable([[0.0] * self.vocabulary.size()] * self.config.size)
         self.bias = tf.Variable([0.0] * self.vocabulary.size())
         with tf.variable_scope("net", reuse=False):
-            self.train_data = self.value_from_file(train_path)
+            self.train_data, self.train_iter = self.get_sentence(train_set)
             self.train_graph = self.build_compute_graph(self.train_data)
         with tf.variable_scope("net", reuse=True):
-            self.validate_data, self.test_data = self.value_from_file(validate_path), self.value_from_file(test_path)
+            self.validate_data, self.validate_iter= self.get_sentence(validate_set)
+            self.test_data, self.test_iter = self.get_sentence(test_set)
             self.validate_graph = self.build_compute_graph(self.validate_data)
             self.test_graph = self.build_compute_graph(self.test_data)
 
@@ -40,17 +43,36 @@ class RnnLm:
         key, value = reader.read(filename_queue)
         return value
 
-    def build_compute_graph(self, input_value):
-        seq_lengths, sequences = self.batched_input(input_value)
-        #sequence_max_len = sequences.shape[1]
-        embeddings_flattened = tf.nn.embedding_lookup(self.vocabulary.get_lookup_tensor(), tf.reshape(sequences, (-1,)))
-        embeddings_reshaped = tf.reshape(
-            embeddings_flattened,
-            (self.config.batch_size, -1, self.vocabulary.vector_length())
+    def get_sentence(self, dataset):
+        """
+        Get op that gets next element (sentence and its length) form dataset
+
+        :param dataset: Dataset from which sentences are taken
+        :return: tuppe - next element op (element consist of length and 1D vector of ids of words) and iterator itself
+            (the iterator object should be initialised at the beggining of a session)
+        """
+        dataset = dataset.map(
+            lambda seq_len, word_ids: (seq_len, word_ids, tf.gather(self.vocabulary.get_lookup_tensor(), word_ids))
         )
+        dataset = dataset.padded_batch(
+            self.config.batch_size,
+            padded_shapes=((), (-1,), (-1, self.vocabulary.vector_length()))
+        )
+        iterator = dataset.make_initializable_iterator()
+        sentence = iterator.get_next()
+        return sentence, iterator
+
+    def build_compute_graph(self, input_value):
+        seq_lengths, sequences, embeded_seqs = input_value
+        ##sequence_max_len = sequences.shape[1]
+        #embeddings_flattened = tf.nn.embedding_lookup(self.vocabulary.get_lookup_tensor(), tf.reshape(sequences, (-1,)))
+        #embeddings_reshaped = tf.reshape(
+        #    embeddings_flattened,
+        #    (self.config.batch_size, -1, self.vocabulary.vector_length())
+        #)
         with tf.variable_scope("RNN"):
             outputs, state = tf.nn.dynamic_rnn(
-                self.cell, embeddings_reshaped, sequence_length=seq_lengths, dtype=tf.float32)
+                self.cell, embeded_seqs, sequence_length=seq_lengths, dtype=tf.float32)
 
         stacked_outs = tf.reshape(outputs, (-1, self.config.size))
         so = tf.matmul(stacked_outs, self.weights) + self.bias
@@ -98,7 +120,7 @@ class RnnLm:
 
     def mask(self, shape, unmasked):    # TODO: tf.sequence_mask
         """
-        Returns 2D tensor with ones and zeros. First "unmasked" elements in a row are ones, other are zeros.
+        Returns 2D tensor with ones and zeros. First ("unmasked") elements in a row are ones, other are zeros.
         """
         zero_mat = tf.zeros(shape=shape, dtype=tf.int64)
         width = tf.reduce_sum(zero_mat[0, :] + 1)
@@ -145,6 +167,9 @@ class RnnLm:
                 #init = tf.global_variables_initializer()
                 #sess.run(init)
                 # Start populating the filename queue.
+
+                session.run(self.train_iter.initializer)
+                session.run(self.validate_iter.initializer)
                 coord = tf.train.Coordinator()
                 threads = tf.train.start_queue_runners(coord=coord, sess=session)
 
@@ -154,10 +179,14 @@ class RnnLm:
                 valid_perplexity = self._run(session, self.validate_graph, 33*5)
                 print("Epoch: %d Valid Perplexity: %.3f" % (i + 1, valid_perplexity))
 
+                session.run(self.test_iter.initializer)
             test_perplexity = self._run(session, self.test_graph, 37*5)
             print("Test Perplexity: %.3f" % test_perplexity)
 
             coord.request_stop()
             coord.join(threads)
-
-#net = RnnLm("train.pb", "validate.pb", "test.pb", BasicConfig, voc) # also temporarly
+'''
+from ptb_reader import * # temporarly
+voc, (tr, val, tst) = read_ptb()
+net = RnnLm(tr.dataset(), val.dataset(), tst.dataset(), BasicConfig, voc) # also temporarly
+'''
