@@ -24,13 +24,15 @@ class RnnLm:
 
         # below all trainable variables are defined
         self.cell = self.multi_cell(config.size, config.depth)
-        self.weights = tf.Variable([[0.0] * self.vocabulary.size()] * self.config.size)
-        self.bias = tf.Variable([0.0] * self.vocabulary.size())
+        self.weights = tf.get_variable(shape=(self.config.size, self.vocabulary.size()), name="weights")
+        self.bias = tf.get_variable(shape=(self.vocabulary.size(),), name="bias")
+        tf.summary.tensor_summary('weights', self.weights)
+        tf.summary.tensor_summary('bias', self.bias)
         with tf.variable_scope("net", reuse=False):
             self.train_data, self.train_iter = self.get_sentence(train_set)
             self.train_graph = self.build_compute_graph(self.train_data)
         with tf.variable_scope("net", reuse=True):
-            self.validate_data, self.validate_iter= self.get_sentence(validate_set)
+            self.validate_data, self.validate_iter = self.get_sentence(validate_set)
             self.test_data, self.test_iter = self.get_sentence(test_set)
             self.validate_graph = self.build_compute_graph(self.validate_data)
             self.test_graph = self.build_compute_graph(self.test_data)
@@ -100,11 +102,13 @@ class RnnLm:
             sequence_features=sequence_features
         )
         return context_parsed['length'],sequence_parsed['tokens']
-
+    cells = 0
     def lstm_cell(self, size):
-        return tf.contrib.rnn.BasicLSTMCell(
-            size, forget_bias=0.0, state_is_tuple=True,
-            reuse=tf.get_variable_scope().reuse)
+        with tf.variable_scope("cell_" + str(RnnLm.cells)):
+            RnnLm.cells += 1
+            return tf.contrib.rnn.BasicLSTMCell(
+                size, forget_bias=0.0, state_is_tuple=True,
+                reuse=tf.get_variable_scope().reuse)
 
     def multi_cell(self, size, layers):
         return tf.contrib.rnn.MultiRNNCell(
@@ -114,7 +118,10 @@ class RnnLm:
         loss = tf.contrib.seq2seq.sequence_loss(
             predictions,
             sequences,
-            self.mask(tf.shape(sequences), lengths))
+            self.mask(tf.shape(sequences), lengths),
+            average_across_timesteps=False,
+            average_across_batch=False,
+        )
         cost = tf.reduce_sum(loss) / self.config.batch_size
         return cost
 
@@ -158,7 +165,7 @@ class RnnLm:
             tf.float32, shape=[], name="new_learning_rate")
         self._lr_update = tf.assign(self._lr, self._new_lr)'''
 
-        sv = tf.train.Supervisor()
+        sv = tf.train.Supervisor(logdir="./logs/")
         with sv.managed_session() as session:
         #with tf.Session() as session:
             for i in range(self.config.max_epoch):
@@ -185,8 +192,10 @@ class RnnLm:
 
             coord.request_stop()
             coord.join(threads)
-'''
-from ptb_reader import * # temporarly
-voc, (tr, val, tst) = read_ptb()
-net = RnnLm(tr.dataset(), val.dataset(), tst.dataset(), BasicConfig, voc) # also temporarly
-'''
+
+
+from ptb_reader import *  # temporarly
+def ptb_test():
+    voc, (tr, val, tst) = read_ptb()
+    net = RnnLm(tr.dataset(), val.dataset(), tst.dataset(), BasicConfig, voc) # also temporarly
+    return net

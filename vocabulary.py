@@ -90,7 +90,11 @@ class Vocabulary:
         return self.id2word(self.one_hot_to_id(one_hot_vector))
 
     def size(self):
-        return len(self.words)
+        """
+        Returns size of vocabulary - number of embeding vectors i.e. number of words + 1 (where '+1' is for the unknow word).
+        :return: int - number of ids/vectors in vocabulary = number of words + 1
+        """
+        return len(self.words)+1
 
     @staticmethod
     def create_vocabulary(words: Iterable[str], minimal_count, create_one_hot_embeddings=False):
