@@ -60,6 +60,7 @@ class RnnLm:
             self.config.batch_size,
             padded_shapes=((), (-1,), (-1, self.vocabulary.vector_length()))
         )
+        
         iterator = dataset.make_initializable_iterator()
         sentence = iterator.get_next()
         return sentence, iterator
@@ -80,7 +81,8 @@ class RnnLm:
         so = tf.matmul(stacked_outs, self.weights) + self.bias
         logits = tf.reshape(so, (self.config.batch_size, -1, self.vocabulary.size())) # -1 replaces unknown max len of sequence in a batch
         predictions = tf.nn.softmax(logits, dim=2)
-        cost = self.cost(seq_lengths, sequences, logits) # logits/predictions?
+        cost = self.cost(seq_lengths, sequences, logits)
+        tf.summary.scalar('cost', cost)
         return {"predictions": predictions, "cost": cost}
 
     def batched_input(self, input_value):
@@ -143,10 +145,33 @@ class RnnLm:
         cost = 0
         if train_op:
             fetches["tain_op"] = train_op
-        for step in range(epoch_size):
-            results = sess.run(fetches)
-            cost += results["cost"]
-        perplexity = np.exp(cost/epoch_size)
+        step = 0
+        while True:
+            step += 1
+            try:
+                print("step:", step)
+                if step % 100 == 0 and False:
+                    results = sess.run({**fetches, "summary": self.summary})
+                    cost += results["cost"]
+                    self.sv.summary_computed(sess, results["summary"])
+                else:
+                    results = sess.run(fetches)
+                    cost += results["cost"]
+                    print("COST: {}".format(results["cost"]))
+            except tf.errors.OutOfRangeError:
+                break
+        '''for step in range(epoch_size):
+            if step % 100 == 0 and False:
+                results = sess.run({**fetches, "summary": self.summary})
+                cost += results["cost"]
+                self.sv.summary_computed(sess, results["summary"])
+            else:
+                results = sess.run(fetches)
+                cost += results["cost"]
+                print("COST: {}".format(results["cost"]))'''
+
+
+        perplexity = cost/step
         print("perplexity: {}".format(perplexity))
         return perplexity
 
@@ -164,8 +189,9 @@ class RnnLm:
         '''self._new_lr = tf.placeholder(
             tf.float32, shape=[], name="new_learning_rate")
         self._lr_update = tf.assign(self._lr, self._new_lr)'''
+        self.summary = tf.summary.merge_all()
 
-        sv = tf.train.Supervisor(logdir="./logs/")
+        self.sv = sv = tf.train.Supervisor(logdir="./logs4/", summary_op=None)
         with sv.managed_session() as session:
         #with tf.Session() as session:
             for i in range(self.config.max_epoch):
