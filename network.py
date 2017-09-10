@@ -4,7 +4,7 @@ import numpy as np
 
 class BasicConfig:
     size = 200
-    depth = 2
+    depth = 1
     batch_size = 20
     learning_rate = 1.0
     max_epoch = 2
@@ -22,28 +22,23 @@ class RnnLm:
         self.validate_set = validate_set
         self.test_set = test_set
 
+        self._cells_created = 0
+
         # below all trainable variables are defined
         self.cell = self.multi_cell(config.size, config.depth)
         self.weights = tf.get_variable(shape=(self.config.size, self.vocabulary.size()), name="weights")
         self.bias = tf.get_variable(shape=(self.vocabulary.size(),), name="bias")
-        tf.summary.tensor_summary('weights', self.weights)
-        tf.summary.tensor_summary('bias', self.bias)
+        #tf.summary.tensor_summary('weights', self.weights)
+        #tf.summary.tensor_summary('bias', self.bias)
         with tf.variable_scope("net", reuse=False):
             self.train_data, self.train_iter = self.get_sentence(train_set)
-            self.train_graph = self.build_compute_graph(self.train_data)
+            self.train_graph = self.build_compute_graph(self.train_data, True)
         with tf.variable_scope("net", reuse=True):
             self.validate_data, self.validate_iter = self.get_sentence(validate_set)
             self.test_data, self.test_iter = self.get_sentence(test_set)
             self.validate_graph = self.build_compute_graph(self.validate_data)
             self.test_graph = self.build_compute_graph(self.test_data)
 
-        #self.train()
-
-    def value_from_file(self, data_path):
-        filename_queue = tf.train.string_input_producer([data_path])
-        reader = tf.TFRecordReader()
-        key, value = reader.read(filename_queue)
-        return value
 
     def get_sentence(self, dataset):
         """
@@ -53,6 +48,7 @@ class RnnLm:
         :return: tuppe - next element op (element consist of length and 1D vector of ids of words) and iterator itself
             (the iterator object should be initialised at the beggining of a session)
         """
+        
         dataset = dataset.map(
             lambda seq_len, word_ids: (seq_len, word_ids, tf.gather(self.vocabulary.get_lookup_tensor(), word_ids))
         )
@@ -60,19 +56,13 @@ class RnnLm:
             self.config.batch_size,
             padded_shapes=((), (-1,), (-1, self.vocabulary.vector_length()))
         )
-        
+
         iterator = dataset.make_initializable_iterator()
         sentence = iterator.get_next()
         return sentence, iterator
 
-    def build_compute_graph(self, input_value):
+    def build_compute_graph(self, input_value, get_summary=False):
         seq_lengths, sequences, embeded_seqs = input_value
-        ##sequence_max_len = sequences.shape[1]
-        #embeddings_flattened = tf.nn.embedding_lookup(self.vocabulary.get_lookup_tensor(), tf.reshape(sequences, (-1,)))
-        #embeddings_reshaped = tf.reshape(
-        #    embeddings_flattened,
-        #    (self.config.batch_size, -1, self.vocabulary.vector_length())
-        #)
         with tf.variable_scope("RNN"):
             outputs, state = tf.nn.dynamic_rnn(
                 self.cell, embeded_seqs, sequence_length=seq_lengths, dtype=tf.float32)
@@ -82,7 +72,8 @@ class RnnLm:
         logits = tf.reshape(so, (self.config.batch_size, -1, self.vocabulary.size())) # -1 replaces unknown max len of sequence in a batch
         predictions = tf.nn.softmax(logits, dim=2)
         cost = self.cost(seq_lengths, sequences, logits)
-        tf.summary.scalar('cost', cost)
+        if get_summary:
+            tf.summary.scalar('cost', cost)
         return {"predictions": predictions, "cost": cost}
 
     def batched_input(self, input_value):
@@ -104,10 +95,10 @@ class RnnLm:
             sequence_features=sequence_features
         )
         return context_parsed['length'],sequence_parsed['tokens']
-    cells = 0
+
     def lstm_cell(self, size):
-        with tf.variable_scope("cell_" + str(RnnLm.cells)):
-            RnnLm.cells += 1
+        with tf.variable_scope("cell_" + str(self._cells_created)):
+            self._cells_created += 1
             return tf.contrib.rnn.BasicLSTMCell(
                 size, forget_bias=0.0, state_is_tuple=True,
                 reuse=tf.get_variable_scope().reuse)
@@ -140,43 +131,36 @@ class RnnLm:
     def assign_lr(self, session, lr_value):
         session.run(self._lr_update, feed_dict={self._new_lr: lr_value})
 
-    def _run(self, sess, outputs, epoch_size, train_op=None):
+    def _run(self, sess, outputs, train_op=None):
         fetches = {k: outputs[k] for k in outputs}
         cost = 0
         if train_op:
             fetches["tain_op"] = train_op
+            fetches["summary"] = self.summary
         step = 0
         while True:
             step += 1
             try:
-                print("step:", step)
-                if step % 100 == 0 and False:
-                    results = sess.run({**fetches, "summary": self.summary})
-                    cost += results["cost"]
-                    self.sv.summary_computed(sess, results["summary"])
-                else:
-                    results = sess.run(fetches)
-                    cost += results["cost"]
-                    print("COST: {}".format(results["cost"]))
-            except tf.errors.OutOfRangeError:
-                break
-        '''for step in range(epoch_size):
-            if step % 100 == 0 and False:
-                results = sess.run({**fetches, "summary": self.summary})
-                cost += results["cost"]
-                self.sv.summary_computed(sess, results["summary"])
-            else:
                 results = sess.run(fetches)
                 cost += results["cost"]
-                print("COST: {}".format(results["cost"]))'''
+                if step % 100 == 0:
+                    print("step:", step)
+                    print("cost: {}".format(results["cost"]))
+                    print("mean cost: {}".format(cost/step))
+                    if train_op:
+                        #summary = sess.run(self.summary)
+                        #results = sess.run({**fetches, "summary": self.summary})
+                        self.train_writer.add_summary(results["summary"], step)
+                        #self.sv.summary_computed(sess, results["summary"])
 
+            except tf.errors.OutOfRangeError:
+                break
 
         perplexity = cost/step
         print("perplexity: {}".format(perplexity))
         return perplexity
 
     def train(self):
-        #self._lr = tf.Variable(0.0, trainable=False)
         self._lr = tf.constant(self.config.learning_rate)
         tvars = tf.trainable_variables()
         grads, _ = tf.clip_by_global_norm(tf.gradients(self.train_graph["cost"], tvars),
@@ -186,34 +170,27 @@ class RnnLm:
             zip(grads, tvars),
             global_step=tf.contrib.framework.get_or_create_global_step())
 
-        '''self._new_lr = tf.placeholder(
-            tf.float32, shape=[], name="new_learning_rate")
-        self._lr_update = tf.assign(self._lr, self._new_lr)'''
-        self.summary = tf.summary.merge_all()
-
-        self.sv = sv = tf.train.Supervisor(logdir="./logs4/", summary_op=None)
-        with sv.managed_session() as session:
-        #with tf.Session() as session:
+        #self.sv = sv = tf.train.Supervisor(logdir="./logs4/", summary_op=None)
+        #with sv.managed_session() as session:
+        with tf.Session() as session:
+            self.summary = tf.summary.merge_all()
+            self.train_writer = tf.summary.FileWriter('./train', session.graph)
+            tf.global_variables_initializer().run()
             for i in range(self.config.max_epoch):
-                '''lr_decay = config.lr_decay ** max(i + 1 - config.max_epoch, 0.0)
-                m.assign_lr(session, config.learning_rate * lr_decay)'''
-                #init = tf.global_variables_initializer()
-                #sess.run(init)
-                # Start populating the filename queue.
-
                 session.run(self.train_iter.initializer)
                 session.run(self.validate_iter.initializer)
+                session.run(self.test_iter.initializer)
                 coord = tf.train.Coordinator()
                 threads = tf.train.start_queue_runners(coord=coord, sess=session)
 
                 print("Epoch: %d " % (i + 1))
-                train_perplexity = self._run(session, self.train_graph, 420*5, self._train_op)
+                train_perplexity = self._run(session, self.train_graph)
                 print("Epoch: %d Train Perplexity: %.3f" % (i + 1, train_perplexity))
-                valid_perplexity = self._run(session, self.validate_graph, 33*5)
+                valid_perplexity = self._run(session, self.validate_graph)
                 print("Epoch: %d Valid Perplexity: %.3f" % (i + 1, valid_perplexity))
 
-                session.run(self.test_iter.initializer)
-            test_perplexity = self._run(session, self.test_graph, 37*5)
+            session.run(self.test_iter.initializer)
+            test_perplexity = self._run(session, self.test_graph)
             print("Test Perplexity: %.3f" % test_perplexity)
 
             coord.request_stop()
@@ -225,3 +202,7 @@ def ptb_test():
     voc, (tr, val, tst) = read_ptb()
     net = RnnLm(tr.dataset(), val.dataset(), tst.dataset(), BasicConfig, voc) # also temporarly
     return net
+
+if __name__ == "__main__":
+    net = ptb_test()
+    net.train()

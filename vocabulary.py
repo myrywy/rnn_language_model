@@ -15,6 +15,7 @@ class Vocabulary:
     :param vectors: Tablica w której vecotrs[0] to wektor domyślny, który jest przypisywany nieznanym wyrazom oraz
         vectors[i] to wektor reprezentujący i-ty wyraz licząc od 1.
     """
+    UNKNOWN_TAG = "<UNKNOWN>"
     def __init__(self, words: List[str], ids: List[int], vectors: np.ndarray):
         vectors = np.array(vectors)
         if strict_mode:
@@ -28,7 +29,21 @@ class Vocabulary:
         self.lookup = tf.constant(vectors)
         self._vector_length = vectors.shape[1]
         self.ids = defaultdict(lambda: 0, zip(words, ids))
-        self.words = defaultdict(lambda: "<UNKNOWN>", zip(ids, words))
+        self.words = defaultdict(lambda: Vocabulary.UNKNOWN_TAG, zip(ids, words))
+
+    def to_vocab_file(self, filename):
+        """
+        Exports vocab in a format where i-th line (counting from 0) contains a word with id=i
+        :return: None
+        """
+        with open(filename, "w") as file:
+            size = max(self.words)
+            file.writeln(Vocabulary.UNKNOWN_TAG)
+            for i in range(size):
+                try:
+                    file.writeln(self.id2word(i))
+                except KeyError:
+                    file.writeln("")
 
     def vector_length(self):
         return self._vector_length
