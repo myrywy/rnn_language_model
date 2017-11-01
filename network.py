@@ -7,7 +7,7 @@ verbosity = "normal"
 
 class BasicConfig:
     size = 200
-    depth = 1
+    depth = 3
     batch_size = 20
     learning_rate = 1.0
     max_epoch = 10
@@ -139,10 +139,17 @@ class RnnLm:
             [self.lstm_cell(size) for _ in range(layers)], state_is_tuple=True)
 
     def cost(self, lengths, sequences, predictions):
+        """
+
+        :param lengths:
+        :param sequences: Tensor of shape (batch size, max sent size, vocab size)
+        :param predictions: Tensor of shape (batch size, max sent)
+        :return:
+        """
         loss = tf.contrib.seq2seq.sequence_loss(
-            predictions,
-            sequences,
-            self.mask(tf.shape(sequences), lengths),
+            tf.slice(predictions, (0, 0, 0), (-1, tf.shape(sequences)[1] - 1, -1)),
+            tf.slice(sequences, (0, 1), (-1, -1)),
+            tf.slice(self.mask(tf.shape(sequences), lengths), (0, 1), (-1, -1)),
             average_across_timesteps=False,
             average_across_batch=False,
         )
@@ -403,7 +410,7 @@ def restore_test():
     #net.run()
     return net
 
-if __name__ == "__main__" and False:
+if __name__ == "__main__" and True:
     net = ptb_test()
     net.train()
 
