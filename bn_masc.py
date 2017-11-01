@@ -1,6 +1,7 @@
 import os
 import sys
 import re
+import pickle
 from collections import deque, namedtuple
 import graf
 
@@ -108,15 +109,22 @@ def get_tokens_ptb(graph, text):
 # remove tokens overlapped by some bigger tokens
 def remove_overlapped(labels):
     out = []
-    for a in labels:
-        overlapped = False
-        for b in labels:
-            if b[0] <= a[0] and a[1] <= b[1] and (a[0] != b[0] or a[1] != b[1]):
-                overlapped = True
-                break
-        if not overlapped:
-            out.append(a)
+    for sentence in labels:
+        out_sentence = []
+        for a in sentence:
+            overlapped = False
+            for b in sentence:
+                if b[0] <= a[0] and a[1] <= b[1] and (a[0] != b[0] or a[1] != b[1]):
+                    overlapped = True
+                    break
+            if not overlapped:
+                out_sentence.append(a)
+        out.append(out_sentence)
     return out
+
+
+class SentenceEnd:
+    pass
 
 
 def get_sense_annotated_text(file_name):
@@ -152,10 +160,38 @@ def get_sense_annotated_text(file_name):
                         break
                     else:
                         u += 1
+        sense_labels.append((token_stop, token_stop, SentenceEnd))
 
     sense_labels = list(sorted(sense_labels, key=lambda x: (x[0], x[1])))
-    sense_labels = remove_overlapped(sense_labels)
-    sense_labels = [(text[start:stop], start, stop, sense) for start, stop, sense in sense_labels]
+    filtered_sense_labels = []
+    skip = False
+    for prev, next in zip(sense_labels, sense_labels[1:]+[None]):
+        if skip:
+            skip = False
+            continue
+        if next is not None and prev[0:2] == next[0:2]:
+            if next[2] is not None:
+                filtered_sense_labels.append(next)
+            else:
+                filtered_sense_labels.append(prev)
+            skip = True
+        else:
+            filtered_sense_labels.append(prev)
+    sense_labels = filtered_sense_labels
+    labeled_sentences = []
+    sentence = []
+    for labeled_token in sense_labels:
+        if labeled_token[2] is SentenceEnd:
+            labeled_sentences.append(sentence)
+            sentence = []
+        else:
+            sentence.append(labeled_token)
+    sense_labels = remove_overlapped(labeled_sentences)
+    sense_labels = [
+                        [
+                            (re.sub(r"[\r\n\t]+", " ", text[start:stop]), start, stop, sense)
+                        for start, stop, sense in sentence]
+                    for sentence in sense_labels]
     return sense_labels
 
 
@@ -191,3 +227,8 @@ def read_masc(path):
         except RuntimeError as err:
             print("\nCorpus file is not readable - parsing error:", err.args[0], file=sys.stderr)
     return corpus_files
+
+
+def load_masc():
+    with open("bn_masc.pickle", "rb") as f:
+        return pickle.load(f)
