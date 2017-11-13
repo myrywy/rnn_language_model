@@ -303,6 +303,7 @@ class RnnLm:
                 print("Epoch: %d Train Perplexity: %.3f" % (i + 1, train_perplexity))
                 valid_perplexity = self._run(session, self.validate_graph, summary_op=validate_summary)
                 print("Epoch: %d Valid Perplexity: %.3f" % (i + 1, valid_perplexity))
+                saver.save(session, "language_model")
 
             session.run(self.test_iter.initializer)
             test_perplexity = self._run(session, self.test_graph, summary_op=test_summary)
@@ -310,7 +311,6 @@ class RnnLm:
 
             coord.request_stop()
             coord.join(threads)
-            saver.save(session, "language_model")
 
 
 class ProductionRnnLm:
@@ -401,7 +401,7 @@ def random_train_test():
     return net
 
 
-def restore_test():
+def restore_test(voc):
     voc, (tr, val, tst) = read_ptb()
     config = BasicConfig()
     config.batch_size = 1
@@ -410,9 +410,20 @@ def restore_test():
     #net.run()
     return net
 
-if __name__ == "__main__" and True:
+if __name__ == "__main__" and False:
     net = ptb_test()
     net.train()
 
 if __name__ == "__main__" and False:
-    net = restore_test()
+    voc = vocabulary.Vocabulary.import_from_file("pdb_vocab.pickle")
+    net = restore_test(voc)
+
+if __name__ == "__main__" and False:
+    net = random_train_test()
+
+if __name__ == "__main__" and True:
+    import vsmlib_vocabulary
+    _, (tr, val, tst) = read_ptb()
+    voc = vsmlib_vocabulary.vsm_embeddings_from_dir_vocabulary("./word_deps_cbow_50d")
+    net = RnnLm(tr.dataset(), val.dataset(), tst.dataset(), BasicConfig, voc)  # also temporarly
+    #net.train()
