@@ -1,4 +1,5 @@
 import numpy as np
+import pickle
 import tensorflow as tf
 from typing import List, Iterable
 from collections import defaultdict
@@ -30,6 +31,26 @@ class Vocabulary:
         self._vector_length = vectors.shape[1]
         self.ids = defaultdict(lambda: 0, zip(words, ids))
         self.words = defaultdict(lambda: Vocabulary.UNKNOWN_TAG, zip(ids, words))
+
+    def export_to_file_obj(self, file_obj):
+        with tf.Session() as sess:
+            pickle.dump(
+                {"ids": [*self.ids.values()], "words": [*self.ids.keys()], "vectors": self.lookup.eval(session=sess)},
+                file_obj)
+
+    def export_to_file(self, path):
+        with open(path, "wb") as f:
+            self.export_to_file_obj(f)
+
+    @classmethod
+    def import_from_file_obj(cls, file_obj):
+        data = pickle.load(file_obj)
+        return cls(data["words"], data["ids"], data["vectors"])
+
+    @classmethod
+    def import_from_file(cls, path):
+        with open(path, "rb") as f:
+            return cls.import_from_file_obj(f)
 
     def to_vocab_file(self, filename):
         """
@@ -141,3 +162,6 @@ class Vocabulary:
             ids, words = prepare_words_ids_lookup(vocab).items()
             return Vocabulary(words, ids, None)
 
+
+class SemanticVocabulary(Vocabulary):
+    UNKNOWN_TAG = ("<UNKNOWN>", None)
