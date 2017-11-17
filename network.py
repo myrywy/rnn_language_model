@@ -12,6 +12,8 @@ class BasicConfig:
     learning_rate = 1.0
     max_epoch = 10
     max_grad_norm = 5
+    init_scale = 0.1
+    lr_decay = 0.5
 
 class RnnLm:
     """Model języka oparty na sieciach rnn. W pierszej wersji tylko do uczenia i ewaluacji, z komórkami lstm"""
@@ -20,6 +22,8 @@ class RnnLm:
         danych wejściowych - czytające z train path, validate path i test path"""
         self.vocabulary = vocabulary
         self.config = config
+        initializer = tf.random_uniform_initializer(-self.config.init_scale,
+                                                    self.config.init_scale)
         train_set, validate_set, test_set = [self._normalize_input_type(obj)
                                              for obj in (train_set, validate_set, test_set)]
         #train_set = train_set.take(25)
@@ -35,14 +39,14 @@ class RnnLm:
 
         # below all trainable variables are defined
         self.cell = self.multi_cell(config.size, config.depth)
-        self.weights = tf.get_variable(shape=(self.config.size, self.vocabulary.size()), name="weights", initializer=tf.contrib.layers.xavier_initializer())
-        self.bias = tf.get_variable(shape=(self.vocabulary.size(),), name="bias")
+        self.weights = tf.get_variable(shape=(self.config.size, self.vocabulary.size()), name="weights", initializer=initializer)
+        self.bias = tf.get_variable(shape=(self.vocabulary.size(),), name="bias", initializer=initializer)
         #tf.summary.tensor_summary('weights', self.weights)
         #tf.summary.tensor_summary('bias', self.bias)
-        with tf.variable_scope("net", reuse=False):
+        with tf.variable_scope("net", reuse=False, initializer=initializer):
             self.train_data, self.train_iter = self.get_sentence(train_set)
             self.train_graph = self.build_compute_graph(self.train_data, "train")
-        with tf.variable_scope("net", reuse=True):
+        with tf.variable_scope("net", reuse=True, initializer=initializer):
             self.validate_data, self.validate_iter = self.get_sentence(validate_set)
             self.test_data, self.test_iter = self.get_sentence(test_set)
             self.validate_graph = self.build_compute_graph(self.validate_data, "validate")
@@ -58,6 +62,12 @@ class RnnLm:
             self.production_graph = self.build_compute_graph(self.production_data,
                                                              "production",
                                                              batch_size=self.production_batch_size)
+
+        self._lr = tf.Variable(0.0, trainable=False)
+        self._new_lr = tf.placeholder(
+            tf.float32, shape=[], name="new_learning_rate")
+        self._lr_update = tf.assign(self._lr, self._new_lr)
+
         self.production_session = None
 
     def _normalize_input_type(self, input_object):
@@ -93,9 +103,14 @@ class RnnLm:
         if batch_size is None:
             batch_size = self.config.batch_size
         seq_lengths, sequences, embeded_seqs = input_value
+        zero_state = self.cell.zero_state(tf.cast(batch_size, tf.int32), tf.float32)
         with tf.variable_scope("RNN"):
             outputs, state = tf.nn.dynamic_rnn(
-                self.cell, embeded_seqs, sequence_length=seq_lengths, dtype=tf.float32)
+                self.cell,
+                embeded_seqs,
+                sequence_length=seq_lengths,
+                dtype=tf.float32,
+                initial_state=zero_state)
 
         stacked_outs = tf.reshape(outputs, (-1, self.config.size))
         so = tf.matmul(stacked_outs, self.weights) + self.bias
@@ -272,7 +287,7 @@ class RnnLm:
         new_saver.restore(sess, tf.train.latest_checkpoint('./'))
 
     def train(self):
-        self._lr = tf.constant(self.config.learning_rate)
+        #self._lr = tf.constant(self.config.learning_rate)
         tvars = tf.trainable_variables()
         grads, _ = tf.clip_by_global_norm(tf.gradients(self.train_graph["cost"], tvars),
                                           self.config.max_grad_norm)
@@ -292,6 +307,8 @@ class RnnLm:
             self.train_writer.add_graph(session.graph)
             tf.global_variables_initializer().run()
             for i in range(self.config.max_epoch):
+                lr_decay = self.config.lr_decay ** max(i + 1 - self.config.max_epoch, 0.0)
+                self.assign_lr(session, self.config.learning_rate * lr_decay)
                 session.run(self.train_iter.initializer)
                 session.run(self.validate_iter.initializer)
                 session.run(self.test_iter.initializer)
@@ -426,4 +443,4 @@ if __name__ == "__main__" and True:
     _, (tr, val, tst) = read_ptb()
     voc = vsmlib_vocabulary.vsm_embeddings_from_dir_vocabulary("./word_deps_cbow_50d")
     net = RnnLm(tr.dataset(), val.dataset(), tst.dataset(), BasicConfig, voc)  # also temporarly
-    #net.train()
+    net.train()
