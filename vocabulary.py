@@ -163,5 +163,3 @@ class Vocabulary:
             return Vocabulary(words, ids, None)
 
 
-class SemanticVocabulary(Vocabulary):
-    UNKNOWN_TAG = ("<UNKNOWN>", None)
