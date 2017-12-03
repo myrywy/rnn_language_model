@@ -67,6 +67,7 @@ class InputData:
 
     def close(self):
         os.remove(self.records_file)
+        self.records_file = None
 
     @staticmethod
     def make_example(sentence: List[int]) -> tf.train.SequenceExample:
@@ -106,3 +107,15 @@ class InputData:
         vocabulary = vc.Vocabulary.create_vocabulary(words, min_word_count, create_one_hot_embeddings=True)
         data = [InputData(vocabulary, sents) for sents in sents_sources]
         return vocabulary, data
+
+
+class InputDataFeedable(InputData):
+    def dataset(self):
+        if not self.records_file:
+            self.records_file = tempfile.mktemp()
+            self.write(self.records_file)
+
+        filenames = [self.records_file]
+        dataset = tf.contrib.data.TFRecordDataset(filenames)
+        dataset = dataset.map(self.get_single_example)
+        return dataset
