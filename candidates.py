@@ -47,7 +47,7 @@ class SemanticVocabulary(vocabulary.Vocabulary):
     def __init__(self, sense_ids: List[str], ids: List[int], vectors: np.ndarray, words: List[str]):
         if ids is None:
             ids = list(range(1, len(words)+1))
-        super().__init__(words, ids, vectors)
+        super().__init__(sense_ids, ids, vectors)
         self.sense_ids = sense_ids
         self.sorted_wors = list(sorted(zip(words, sense_ids)))
 
