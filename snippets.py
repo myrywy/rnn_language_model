@@ -25,3 +25,4 @@ class Snippet:
     def _tokenize(self, text):
         return word_tokenize(text.lower())
 
+
