@@ -1,5 +1,7 @@
+from collections import Counter
 import numpy
 import candidates
+import snippets
 
 
 class VectorDistanceClassifier:
@@ -35,6 +37,34 @@ class VectorDistanceClassifier:
         for candidate in candidates:
             distances.append((candidate[0], numpy.linalg.norm(self.vocabulary.word2vec(candidate[1]) - predicted_vec)))
         return list(sorted(distances, key=lambda x: x[1]))[0]
+
+
+class LMClosestClassifier:
+    def __init__(self, vocabulary, language_model):
+        self.distance_classifier = VectorDistanceClassifier(vocabulary)
+        self.vocabulary = vocabulary
+        self.lm = language_model
+
+    def classify(self, text, target_word):
+        s = snippets.Snippet(text, target_word)
+        possible_interpretations = sv.cart_meanings_of_snetence(s.masked_text)
+        best_interpretation = np.argmax(
+            [self.lm.get_sentence_probability(interpretation for interpretation in possible_interpretations)]
+        )
+        senses = []
+        probabilities = []
+        for target_index in s.target_indices:
+            sense, probability = best_interpretation[target_index]
+            senses.append(sense)
+            probabilities.append(probability)
+        sense_counts = Counter(senses)
+        predicted_sense = sense_counts.most_common(1)[0]
+        candidates = self.vocabulary.possible_meanings(target_word)
+        return self.distance_classifier.choose_closest(predicted_sense, candidates)[0]
+        words_probs = self.lm.predict_words_in_sentece(s.masked_text, s.target_indices, sort=True)
+        results = Counter(probs[-1] for probs in words_probs)
+        self.distance_classifier.choose_closest(results.most_common(1)[0][0], candidates)
+
 
 
 if __name__ == "__main__":
