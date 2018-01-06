@@ -1,6 +1,7 @@
 from typing import List, Tuple
 import tensorflow as tf
 import numpy as np
+import math
 import input_data
 
 verbosity = "normal"
@@ -183,6 +184,20 @@ class RnnLm:
 
     def assign_lr(self, session, lr_value):
         session.run(self._lr_update, feed_dict={self._new_lr: lr_value})
+
+    def get_sentence_probability(self, sent):
+        probs = predict_words_in_sentence(sent, list(range(len(sent))))
+        word_probabilities = []
+        for word, predictions in zip(sent, probs):
+            word_probability = 0
+            for predicted_word, prob in reversed(predictions):
+                if word == predicted_word:
+                    word_probability = prob
+                    break
+            if word_probability != 0:
+                word_probabilities.append(math.log(word_probability))
+        return math.exp(sum(word_probabilities))
+
 
     def predict_word(self, sentence: List[str], index: int, **kw):
         return self.predict_words_in_sentece(sentence, [index], **kw)[0]
@@ -443,4 +458,4 @@ if __name__ == "__main__" and True:
     _, (tr, val, tst) = read_ptb()
     voc = vsmlib_vocabulary.vsm_embeddings_from_dir_vocabulary("./word_deps_cbow_50d")
     net = RnnLm(tr.dataset(), val.dataset(), tst.dataset(), BasicConfig, voc)  # also temporarly
-    net.train()
+    #net.train()
