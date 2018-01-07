@@ -23,3 +23,16 @@ def read_ptb(path=join("ptb","data")):
         file_reader(join(path, "ptb.train.txt")),
         file_reader(join(path, "ptb.valid.txt")),
         file_reader(join(path, "ptb.test.txt")))
+
+
+def read_ptb_with_voc(vocabulary, path=join("ptb","data")):
+    def read_sents(filename):
+        with open(filename) as file:
+            for line in file:
+                yield line.lower().split() + ["</snt>"]
+    file_reader = lambda filename: GenIt(read_sents, filename)
+    return [input_data.InputData(vocabulary, sents=fr) for fr in [
+        file_reader(join(path, "ptb.train.txt")),
+        file_reader(join(path, "ptb.valid.txt")),
+        file_reader(join(path, "ptb.test.txt"))
+        ]]
