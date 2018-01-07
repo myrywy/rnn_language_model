@@ -176,22 +176,14 @@ class RnnLm:
         :param predictions: Tensor of shape (batch size, max sent)
         :return:
         """
-        """loss = tf.contrib.seq2seq.sequence_loss(
-            tf.slice(predictions, (0, 0, 0), (-1, tf.shape(sequences)[1] - 1, -1)),
-            tf.slice(sequences, (0, 0), (-1, -1)),
-            tf.slice(self.mask(tf.shape(sequences), lengths-1), (0, 1), (-1, -1)),
-            average_across_timesteps=False,
-            average_across_batch=False,
-        )
-        cost = tf.reduce_sum(loss) / self.config.batch_size"""
 
         crossent = tf.nn.sparse_softmax_cross_entropy_with_logits(
             labels=sequences, logits=predictions)
         target_weights = self.mask(tf.shape(sequences), lengths)
+        target_weights *= self.mask_unknown(sequences)
         train_loss = tf.reduce_sum(crossent * target_weights)
         train_loss /= tf.cast(tf.shape(sequences)[0], dtype=tf.float32)
         return train_loss
-        return cost
 
     def mask(self, shape, unmasked):    # TODO: tf.sequence_mask
         """
@@ -202,6 +194,10 @@ class RnnLm:
         range_matrix = zero_mat + tf.range(width, dtype=tf.int64)
         return tf.cast(range_matrix < (tf.zeros(shape=shape, dtype=tf.int64) + tf.reshape(unmasked, (-1, 1))),
                        dtype=tf.float32)
+
+    def mask_unknown(self, sequences, masc_type=tf.float32):
+        nonzeros = tf.not_equal(sequences, 0, "nonzeros")
+        return tf.cast(nonzeros, masc_type, "nonzero_mask")
 
     def assign_lr(self, session, lr_value):
         session.run(self._lr_update, feed_dict={self._new_lr: lr_value})
