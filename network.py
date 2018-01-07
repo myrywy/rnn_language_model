@@ -7,14 +7,14 @@ import input_data
 verbosity = "normal"
 
 class BasicConfig:
-    size = 200
-    depth = 3
+    size = 100
+    depth = 2
     batch_size = 20
     learning_rate = 1.0
-    max_epoch = 10
+    max_epoch = 30
     max_grad_norm = 5
     init_scale = 0.1
-    lr_decay = 0.5
+    lr_decay = 1 / 1.15
 
 class RnnLm:
     """Model języka oparty na sieciach rnn. W pierszej wersji tylko do uczenia i ewaluacji, z komórkami lstm"""
@@ -68,6 +68,7 @@ class RnnLm:
         self._new_lr = tf.placeholder(
             tf.float32, shape=[], name="new_learning_rate")
         self._lr_update = tf.assign(self._lr, self._new_lr)
+        self.end_of_sentence_id = 0
 
         self.production_session = None
 
@@ -104,12 +105,25 @@ class RnnLm:
         if batch_size is None:
             batch_size = self.config.batch_size
         seq_lengths, sequences, embeded_seqs = input_value
+        # note - start marks are prepended to INPUTS so they are represented by vectors so their rank is 3 (batch
+        # size dimension, max sequence length dimesion, vector size dimension);
+        # end marks are appended to EXPECTED OUTPUTS so they are represented by id so their rank is 2 (batch size,
+        # max sequence length dimension)
+        start_marks_shape = tf.stack([tf.shape(embeded_seqs)[0], tf.constant(1), tf.shape(embeded_seqs)[2]], axis=0)
+        start_marks = tf.zeros(shape=start_marks_shape,
+                              dtype=embeded_seqs.dtype)
+        end_marks_shape = start_marks_shape[0:2]
+        end_marks = tf.zeros(shape=end_marks_shape,
+                              dtype=sequences.dtype)
+        extended_sequences = tf.concat([sequences, end_marks], axis=1)
+        extended_embeded_seqs = tf.concat([start_marks, embeded_seqs], axis=1)
+        extended_length = seq_lengths
         zero_state = self.cell.zero_state(tf.cast(batch_size, tf.int32), tf.float32)
         with tf.variable_scope("RNN"):
             outputs, state = tf.nn.dynamic_rnn(
                 self.cell,
-                embeded_seqs,
-                sequence_length=seq_lengths,
+                extended_embeded_seqs,
+                sequence_length=extended_length,
                 dtype=tf.float32,
                 initial_state=zero_state)
 
@@ -118,10 +132,10 @@ class RnnLm:
         logits_shape = tf.concat(axis=0, values=[[batch_size], tf.constant([-1, self.vocabulary.size()], dtype=tf.int64)])
         logits_shape = tf.cast(logits_shape, tf.int32)
         logits = tf.reshape(so, logits_shape) # -1 replaces unknown max len of sequence in a batch
-        predictions = tf.nn.softmax(logits, dim=2)
-        cost = self.cost(seq_lengths, sequences, logits)
+        predictions = logits#tf.nn.softmax(logits, dim=2)
+        cost = self.cost(seq_lengths, extended_sequences, logits)
         self.summaries[phase].append(tf.summary.scalar('{}_cost'.format(phase), cost))
-        return {"predictions": predictions, "cost": cost, "sequences": sequences, "embeded_seqs": embeded_seqs}
+        return {"predictions": predictions, "cost": cost, "sequences": sequences, "embeded_seqs": embeded_seqs, "rnn_outputs": outputs, "stacked_outs": so, "logits_shape": logits_shape, "logits": logits, "zero_state": zero_state, "state": state}
 
     def batched_input(self, input_value):
         batches = tf.train.batch(list(self.get_single_example(input_value)), batch_size=self.config.batch_size,
@@ -162,14 +176,21 @@ class RnnLm:
         :param predictions: Tensor of shape (batch size, max sent)
         :return:
         """
-        loss = tf.contrib.seq2seq.sequence_loss(
+        """loss = tf.contrib.seq2seq.sequence_loss(
             tf.slice(predictions, (0, 0, 0), (-1, tf.shape(sequences)[1] - 1, -1)),
-            tf.slice(sequences, (0, 1), (-1, -1)),
-            tf.slice(self.mask(tf.shape(sequences), lengths), (0, 1), (-1, -1)),
+            tf.slice(sequences, (0, 0), (-1, -1)),
+            tf.slice(self.mask(tf.shape(sequences), lengths-1), (0, 1), (-1, -1)),
             average_across_timesteps=False,
             average_across_batch=False,
         )
-        cost = tf.reduce_sum(loss) / self.config.batch_size
+        cost = tf.reduce_sum(loss) / self.config.batch_size"""
+
+        crossent = tf.nn.sparse_softmax_cross_entropy_with_logits(
+            labels=sequences, logits=predictions)
+        target_weights = self.mask(tf.shape(sequences), lengths)
+        train_loss = tf.reduce_sum(crossent * target_weights)
+        train_loss /= tf.cast(tf.shape(sequences)[0], dtype=tf.float32)
+        return train_loss
         return cost
 
     def mask(self, shape, unmasked):    # TODO: tf.sequence_mask
@@ -253,22 +274,24 @@ class RnnLm:
         return results
 
     def _run(self, sess, outputs, train_op=None, summary_op=None):
-        fetches = {k: outputs[k] for k in outputs}
+        fetches = {k: outputs[k] for k in outputs if k} # if k in {"sequences", "embeded_seqs", "rnn_outputs", "stacked_outs", "logits_shape", "logits", "predictions"}
         cost = 0
         if train_op is not None:
             fetches["tain_op"] = train_op
         if summary_op is not None:
-            fetches["summary"] = summary_op
+            pass#fetches["summary"] = summary_op
         step = 0
         while True:
             step += 1
             try:
                 results = sess.run(fetches)
+                print(*results.keys())
                 cost += results["cost"]
                 if step % 1 == 0:
                     print("step:", step)
                     print("cost: {}".format(results["cost"]))
                     print("mean cost: {}".format(cost/step))
+                    print("logits_shape: {}".format(results["logits_shape"]))
                     if verbosity == "insane":
                         print("batch: \n{}".format(results["sequences"]))
                         for i in range(len(results["embeded_seqs"])):
@@ -281,9 +304,10 @@ class RnnLm:
                                 sent_words.append(self.vocabulary.id2word(identifier))
                             print(" ".join(sent_words).replace("<UNKNOWN>", ""))
                     if summary_op is not None:
+                        pass
                         #summary = sess.run(self.summary)
                         #results = sess.run({**fetches, "summary": self.summary})
-                        self.train_writer.add_summary(results["summary"], step)
+                        #self.train_writer.add_summary(results["summary"], step)
                         #self.sv.summary_computed(sess, results["summary"])
 
             except tf.errors.OutOfRangeError:
@@ -314,13 +338,17 @@ class RnnLm:
         #self.sv = sv = tf.train.Supervisor(logdir="./logs4/", summary_op=None)
         #with sv.managed_session() as session:
         saver = tf.train.Saver()
-        with tf.Session() as session:
+        config = tf.ConfigProto()
+        #config.gpu_options.allow_growth = True
+        config.gpu_options.per_process_gpu_memory_fraction = 0.8
+        with tf.Session(config=config) as session:
             train_summary = tf.summary.merge(self.summaries["train"])
             validate_summary = tf.summary.merge(self.summaries["validate"])
             test_summary = tf.summary.merge(self.summaries["test"])
             self.train_writer = tf.summary.FileWriter('./train')
             self.train_writer.add_graph(session.graph)
             tf.global_variables_initializer().run()
+            #tf.get_default_graph().finalize()
             for i in range(self.config.max_epoch):
                 lr_decay = self.config.lr_decay ** max(i + 1 - self.config.max_epoch, 0.0)
                 self.assign_lr(session, self.config.learning_rate * lr_decay)
@@ -335,7 +363,7 @@ class RnnLm:
                 print("Epoch: %d Train Perplexity: %.3f" % (i + 1, train_perplexity))
                 valid_perplexity = self._run(session, self.validate_graph, summary_op=validate_summary)
                 print("Epoch: %d Valid Perplexity: %.3f" % (i + 1, valid_perplexity))
-                saver.save(session, "language_model")
+                saver.save(session, "./language_model")
 
             session.run(self.test_iter.initializer)
             test_perplexity = self._run(session, self.test_graph, summary_op=test_summary)
@@ -455,7 +483,7 @@ if __name__ == "__main__" and False:
 
 if __name__ == "__main__" and True:
     import vsmlib_vocabulary
-    _, (tr, val, tst) = read_ptb()
     voc = vsmlib_vocabulary.vsm_embeddings_from_dir_vocabulary("./word_deps_cbow_50d")
+    tr, val, tst = read_ptb_with_voc(voc)
     net = RnnLm(tr.dataset(), val.dataset(), tst.dataset(), BasicConfig, voc)  # also temporarly
     #net.train()
